@@ -415,9 +415,12 @@ impl CanFdSocketTimestamp {
     }
 
     /// Write a CAN FD frame to the socket asynchronously
-    pub async fn write_frame(&self, frame: CanFdFrame) -> IoResult<()> {
+    pub async fn write_frame<F>(&self, frame: &F) -> IoResult<()>
+    where
+        F: Into<CanAnyFrame> + AsPtr,
+    {
         self.0
-            .async_io(Interest::WRITABLE, |inner| inner.write_frame(&frame))
+            .async_io(Interest::WRITABLE, |inner| inner.write_frame(frame))
             .await
     }
 

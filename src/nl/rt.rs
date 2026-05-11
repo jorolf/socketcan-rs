@@ -246,6 +246,17 @@ pub enum IflaCan {
 
 impl RtaType for IflaCan {}
 
+pub const IFLA_CAN_CTRLMODE_UNSPEC: u16 = 0;
+pub const IFLA_CAN_CTRLMODE_SUPPORTED: u16 = 1;
+
+#[neli_enum(serialized_type = "libc::c_ushort")]
+pub enum IflaCanCtrlMode {
+    Unspec = IFLA_CAN_CTRLMODE_UNSPEC,
+    Supported = IFLA_CAN_CTRLMODE_SUPPORTED,
+}
+
+impl RtaType for IflaCanCtrlMode {}
+
 /////////////////////////////////////////////////////////////////////////////
 
 #[cfg(test)]

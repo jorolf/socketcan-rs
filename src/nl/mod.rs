@@ -68,7 +68,7 @@ use neli::{
     FromBytes, ToBytes,
 };
 use nix::{self, net::if_::if_nametoindex, unistd};
-use rt::IflaCan;
+use rt::{IflaCan, IflaCanCtrlMode, can_ctrlmode};
 use std::{
     ffi::CStr,
     fmt::Debug,
@@ -78,7 +78,6 @@ use std::{
 /// Low-level Netlink CAN struct bindings.
 mod rt;
 
-use rt::can_ctrlmode;
 pub use rt::CanState;
 
 /// A result for Netlink errors.
@@ -165,6 +164,8 @@ pub struct InterfaceCanParams {
     pub berr_counter: Option<CanBerrCounter>,
     /// The control mode bits
     pub ctrl_mode: Option<CanCtrlModes>,
+    /// The supported control mode bits
+    pub ctrl_mode_supported: Option<CanCtrlModes>,
     /// The FD data bit timing
     pub data_bit_timing: Option<CanBitTiming>,
     /// The FD data bit timing const parameters
@@ -216,6 +217,17 @@ impl TryFrom<&Rtattr<Ifla, Buffer>> for InterfaceCanParams {
                         }
                         IflaCan::Termination => {
                             params.termination = Some(attr.get_payload_as::<u16>()?);
+                        }
+                        IflaCan::CtrlModeExt => {
+                            for ctrlmode_attr in attr.get_attr_handle::<IflaCanCtrlMode>()?.get_attrs() {
+                                match ctrlmode_attr.rta_type {
+                                    IflaCanCtrlMode::Supported => {
+                                        let ctrl_mode = attr.get_payload_as::<can_ctrlmode>()?;
+                                        params.ctrl_mode_supported = Some(CanCtrlModes(ctrl_mode));
+                                    },
+                                    _ => {},
+                                }
+                            }
                         }
                         _ => (),
                     }

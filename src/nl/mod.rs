@@ -450,6 +450,7 @@ impl CanInterface {
     /// Creates an `Ifinfomsg` for this CAN interface from a buffer
     fn info_msg(&self, buf: RtBuffer<Ifla, Buffer>) -> Result<Ifinfomsg, BuilderError> {
         Ok(IfinfomsgBuilder::default()
+            .ifi_family(RtAddrFamily::Unspecified)
             .ifi_index(self.if_index as i32)
             .rtattrs(buf)
             .build()?)
@@ -516,6 +517,7 @@ impl CanInterface {
     pub fn bring_down(&self) -> NlResult<()> {
         // Specific iface down info
         let info = IfinfomsgBuilder::default()
+            .ifi_family(RtAddrFamily::Unspecified)
             .ifi_index(self.if_index as i32)
             .down()
             .build()?;
@@ -529,6 +531,7 @@ impl CanInterface {
     pub fn bring_up(&self) -> NlResult<()> {
         // Specific iface up info
         let info = IfinfomsgBuilder::default()
+            .ifi_family(RtAddrFamily::Unspecified)
             .ifi_index(self.if_index as i32)
             .up()
             .build()?;
@@ -566,7 +569,6 @@ impl CanInterface {
 
         let info = IfinfomsgBuilder::default()
             .ifi_family(RtAddrFamily::Unspecified)
-            .ifi_type(Arphrd::Netrom)
             .ifi_index(index.unwrap_or_default() as i32)
             .rtattrs({
                 let mut buffer = RtBuffer::new();

@@ -176,7 +176,8 @@ impl TryFrom<&Rtattr<Ifla, Buffer>> for InterfaceCanParams {
 
         for info in link_info.get_attr_handle::<IflaInfo>()?.get_attrs() {
             if *info.rta_type() == IflaInfo::Data {
-                for attr in info.get_attr_handle::<IflaCan>()?.get_attrs() {
+                let can_attr = info.get_attr_handle::<IflaCan>()?;
+                for attr in can_attr.get_attrs() {
                     match attr.rta_type() {
                         IflaCan::BitTiming => {
                             params.bit_timing = Some(attr.get_payload_as::<CanBitTiming>()?);
@@ -217,7 +218,7 @@ impl TryFrom<&Rtattr<Ifla, Buffer>> for InterfaceCanParams {
                             {
                                 match ctrlmode_attr.rta_type() {
                                     IflaCanCtrlMode::Supported => {
-                                        let ctrl_mode = attr.get_payload_as::<can_ctrlmode>()?;
+                                        let ctrl_mode = ctrlmode_attr.get_payload_as::<can_ctrlmode>()?;
                                         params.ctrl_mode_supported = Some(CanCtrlModes(ctrl_mode));
                                     }
                                     _ => {}
@@ -227,6 +228,19 @@ impl TryFrom<&Rtattr<Ifla, Buffer>> for InterfaceCanParams {
                         _ => (),
                     }
                 }
+                /*
+                let ctrlmode_ext = can_attr.get_nested_attributes::<IflaCanCtrlMode>(IflaCan::CtrlModeExt)?;
+                for ctrlmode_attr in ctrlmode_ext.get_attrs() {
+                    match ctrlmode_attr.rta_type() {
+                        IflaCanCtrlMode::Supported => {
+                            let ctrl_mode = ctrlmode_attr.get_payload_as::<can_ctrlmode>()?;
+                            params.ctrl_mode_supported = Some(CanCtrlModes(ctrl_mode));
+                        }
+                        _ => {}
+                    }
+                }*/
+
+
             }
         }
         Ok(params)
@@ -495,12 +509,12 @@ impl CanInterface {
 
         let info = self.info_msg({
             let mut buffer = RtBuffer::new();
-            buffer.push(
+            /*buffer.push(
                 RtattrBuilder::default()
                     .rta_type(Ifla::ExtMask)
                     .rta_payload(rt::EXT_FILTER_VF)
                     .build()?,
-            );
+            );*/
             buffer
         })?;
 

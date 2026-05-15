@@ -220,7 +220,7 @@ pub const IFLA_CAN_BITRATE_CONST: u16 = 13;
 pub const IFLA_CAN_DATA_BITRATE_CONST: u16 = 14;
 pub const IFLA_CAN_BITRATE_MAX: u16 = 15;
 pub const IFLA_CAN_TDC: u16 = 16;
-pub const IFLA_CAN_CTRLMODE_EXT: u16 = 17;
+pub const IFLA_CAN_CTRLMODE_EXT: u16 = 0x8011;
 
 /// CAN netlink interface
 ///

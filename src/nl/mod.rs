@@ -56,7 +56,7 @@ use neli::{
     attr::Attribute,
     consts::{
         nl::NlmF,
-        rtnl::{Arphrd, Iff, Ifla, IflaInfo, RtAddrFamily, Rtm},
+        rtnl::{Iff, Ifla, IflaInfo, RtAddrFamily, Rtm},
         socket::NlFamily,
     },
     err::{BuilderError, DeError, RouterError, SocketError},
@@ -158,7 +158,7 @@ pub struct InterfaceCanParams {
     /// The control mode bits
     pub ctrl_mode: Option<CanCtrlModes>,
     /// The supported control mode bits
-    pub ctrl_mode_supported: Option<CanCtrlModes>,
+    pub ctrl_mode_supported: Option<CanCtrlMode>,
     /// The FD data bit timing
     pub data_bit_timing: Option<CanBitTiming>,
     /// The FD data bit timing const parameters
@@ -218,8 +218,8 @@ impl TryFrom<&Rtattr<Ifla, Buffer>> for InterfaceCanParams {
                             {
                                 match ctrlmode_attr.rta_type() {
                                     IflaCanCtrlMode::Supported => {
-                                        let ctrl_mode = ctrlmode_attr.get_payload_as::<can_ctrlmode>()?;
-                                        params.ctrl_mode_supported = Some(CanCtrlModes(ctrl_mode));
+                                        let ctrl_mode = ctrlmode_attr.get_payload_as::<CanCtrlMode>()?;
+                                        params.ctrl_mode_supported = Some(ctrl_mode);
                                     }
                                     _ => {}
                                 }
@@ -228,19 +228,6 @@ impl TryFrom<&Rtattr<Ifla, Buffer>> for InterfaceCanParams {
                         _ => (),
                     }
                 }
-                /*
-                let ctrlmode_ext = can_attr.get_nested_attributes::<IflaCanCtrlMode>(IflaCan::CtrlModeExt)?;
-                for ctrlmode_attr in ctrlmode_ext.get_attrs() {
-                    match ctrlmode_attr.rta_type() {
-                        IflaCanCtrlMode::Supported => {
-                            let ctrl_mode = ctrlmode_attr.get_payload_as::<can_ctrlmode>()?;
-                            params.ctrl_mode_supported = Some(CanCtrlModes(ctrl_mode));
-                        }
-                        _ => {}
-                    }
-                }*/
-
-
             }
         }
         Ok(params)
@@ -318,40 +305,10 @@ impl TryFrom<&InterfaceCanParams> for RtBuffer<Ifla, Buffer> {
 }
 
 // ===== CanCtrlMode(s) =====
-
 ///
 /// CAN control modes
 ///
-/// Note that these correspond to the bit _numbers_ for the control mode bits.
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum CanCtrlMode {
-    /// Loopback mode
-    Loopback,
-    /// Listen-only mode
-    ListenOnly,
-    /// Triple sampling mode
-    TripleSampling,
-    /// One-Shot mode
-    OneShot,
-    /// Bus-error reporting
-    BerrReporting,
-    /// CAN FD mode
-    Fd,
-    /// Ignore missing CAN ACKs
-    PresumeAck,
-    /// CAN FD in non-ISO mode
-    NonIso,
-    /// Classic CAN DLC option
-    CcLen8Dlc,
-}
-
-impl CanCtrlMode {
-    /// Get the mask for the specific control mode
-    pub fn mask(&self) -> u32 {
-        1u32 << (*self as u32)
-    }
-}
+pub use rt::CanCtrlMode;
 
 /// The collection of control modes
 #[derive(Debug, Default, Clone, Copy)]
@@ -359,23 +316,21 @@ pub struct CanCtrlModes(can_ctrlmode);
 
 impl CanCtrlModes {
     /// Create a set of CAN control modes from a mask and set of flags.
-    pub fn new(mask: u32, flags: u32) -> Self {
+    pub fn new(mask: CanCtrlMode, flags: CanCtrlMode) -> Self {
         Self(can_ctrlmode { mask, flags })
     }
 
     /// Create the set of mode flags for a single mode
     pub fn from_mode(mode: CanCtrlMode, on: bool) -> Self {
-        let mask = mode.mask();
-        let flags = if on { mask } else { 0 };
-        Self::new(mask, flags)
+        let flags = if on { mode } else { CanCtrlMode::empty() };
+        Self::new(mode, flags)
     }
 
     /// Adds a mode flag to the existing set of modes.
     pub fn add(&mut self, mode: CanCtrlMode, on: bool) {
-        let mask = mode.mask();
-        self.0.mask |= mask;
+        self.0.mask |= mode;
         if on {
-            self.0.flags |= mask;
+            self.0.flags |= mode;
         }
     }
 
@@ -383,6 +338,11 @@ impl CanCtrlModes {
     #[inline]
     pub fn clear(&mut self) {
         self.0 = can_ctrlmode::default();
+    }
+
+    /// Returns the inner mode flags
+    pub fn flags(&self) -> CanCtrlMode {
+        self.0.flags
     }
 
     /// Test if this CanCtrlModes has a specific `mode` turned on
@@ -402,7 +362,7 @@ impl CanCtrlModes {
     /// ```
     #[inline]
     pub fn has_mode(&self, mode: CanCtrlMode) -> bool {
-        (mode.mask() & self.0.flags) != 0
+        self.0.flags.contains(mode)
     }
 }
 
@@ -509,12 +469,12 @@ impl CanInterface {
 
         let info = self.info_msg({
             let mut buffer = RtBuffer::new();
-            /*buffer.push(
+            buffer.push(
                 RtattrBuilder::default()
                     .rta_type(Ifla::ExtMask)
                     .rta_payload(rt::EXT_FILTER_VF)
                     .build()?,
-            );*/
+            );
             buffer
         })?;
 
@@ -753,42 +713,6 @@ impl CanInterface {
             //RtBuffer<Ifla, Buffer>::try_from(params)?);
             RtBuffer::try_from(params)?,
         )?;
-        /*
-            let mut rtattrs: RtBuffer<Ifla, Buffer> = RtBuffer::new();
-            let mut data = Rtattr::new(None, IflaInfo::Data, Buffer::new())?;
-
-            if let Some(bt) = params.bit_timing {
-                data.add_nested_attribute(&Rtattr::new(None, IflaCan::BitTiming, bt)?)?;
-            }
-            if let Some(r) = params.restart_ms {
-                data.add_nested_attribute(&Rtattr::new(
-                    None,
-                    IflaCan::RestartMs,
-                    &r.to_ne_bytes()[..],
-                )?)?;
-            }
-            if let Some(cm) = params.ctrl_mode {
-                data.add_nested_attribute(&Rtattr::new::<can_ctrlmode>(
-                    None,
-                    IflaCan::CtrlMode,
-                    cm.into(),
-                )?)?;
-            }
-            if let Some(dbt) = params.data_bit_timing {
-                data.add_nested_attribute(&Rtattr::new(None, IflaCan::DataBitTiming, dbt)?)?;
-            }
-            if let Some(t) = params.termination {
-                data.add_nested_attribute(&Rtattr::new(None, IflaCan::Termination, t)?)?;
-            }
-
-            let mut link_info = Rtattr::new(None, Ifla::Linkinfo, Buffer::new())?;
-            link_info.add_nested_attribute(&Rtattr::new(None, IflaInfo::Kind, "can")?)?;
-            link_info.add_nested_attribute(&data)?;
-
-            rtattrs.push(link_info);
-            rtattrs
-        });
-        */
         Self::send_info_msg(Rtm::Newlink, info, NlmF::empty())
     }
 

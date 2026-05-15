@@ -21,15 +21,14 @@
 use crate::{as_bytes, as_bytes_mut};
 use libc::{c_char, c_uint};
 use neli::{
-    consts::rtnl::{RtaType, RtaTypeWrapper},
-    err::{DeError, SerError},
-    impl_trait, neli_enum, FromBytes, Size, ToBytes,
+    FromBytes, Size, ToBytes, TypeSize, consts::rtnl::{RtaType, RtaTypeWrapper}, err::{DeError, SerError}, impl_flags, impl_trait, neli_enum
 };
 use std::{
     io::{self, Cursor, Read, Write},
     mem,
     mem::size_of,
 };
+use bitflags::bitflags;
 
 pub const EXT_FILTER_VF: c_uint = 1 << 0;
 pub const EXT_FILTER_BRVLAN: c_uint = 1 << 1;
@@ -155,18 +154,6 @@ pub struct can_berr_counter {
     pub rxerr: u16,
 }
 
-/// CAN controller mode
-///
-/// To set or clear a bit, set the `mask` for that bit, then set or clear
-/// the bit in the `flags` and send via `set_ctrlmode()`.
-///
-#[repr(C)]
-#[derive(Debug, Default, Copy, Clone, FromBytes, ToBytes, Size)]
-pub struct can_ctrlmode {
-    pub mask: u32,
-    pub flags: u32,
-}
-
 /// Loopback mode
 pub const CAN_CTRLMODE_LOOPBACK: u32 = 0x01;
 /// Listen-only mode
@@ -188,6 +175,48 @@ pub const CAN_CTRLMODE_CC_LEN8_DLC: u32 = 0x100;
 
 /// u16 termination range: 1..65535 Ohms
 pub const CAN_TERMINATION_DISABLED: u32 = 0;
+
+
+impl_flags! {
+    /// Flag struct of all possible CAN control modes
+    pub CanCtrlMode: u32 {
+        /// Loopback mode
+        Loopback = CAN_CTRLMODE_LOOPBACK,
+        /// Listen-only mode
+        ListenOnly = CAN_CTRLMODE_LISTENONLY,
+        /// Triple sampling mode
+        TripleSampling = CAN_CTRLMODE_3_SAMPLES,
+        /// One-Shot mode
+        OneShot = CAN_CTRLMODE_ONE_SHOT,
+        /// Bus-error reporting
+        BerrReporting = CAN_CTRLMODE_BERR_REPORTING,
+        /// CAN FD mode
+        Fd = CAN_CTRLMODE_FD,
+        /// Ignore missing CAN ACKs
+        PresumeAck = CAN_CTRLMODE_PRESUME_ACK,
+        /// CAN FD in non-ISO mode
+        NonIso = CAN_CTRLMODE_FD_NON_ISO,
+        /// Classic CAN DLC option
+        CcLen8Dlc = CAN_CTRLMODE_CC_LEN8_DLC,
+    }
+}
+
+impl Default for CanCtrlMode {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+/// CAN controller mode
+///
+/// To set or clear a bit, set the `mask` for that bit, then set or clear
+/// the bit in the `flags` and send via `set_ctrlmode()`.
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone, FromBytes, ToBytes, Size)]
+pub struct can_ctrlmode {
+    pub mask: CanCtrlMode,
+    pub flags: CanCtrlMode,
+}
 
 ///
 /// CAN device statistics

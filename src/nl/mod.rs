@@ -67,7 +67,7 @@ use neli::{
     utils::Groups,
     FromBytes, Size, ToBytes,
 };
-use nix::{self, net::if_::if_nametoindex, unistd};
+use nix::{self, net::if_::if_nametoindex};
 use rt::{can_ctrlmode, IflaCan, IflaCanCtrlMode};
 use std::{ffi::CStr, fmt::Debug, os::raw::c_uint};
 
@@ -394,9 +394,15 @@ impl From<CanCtrlModes> for can_ctrlmode {
 /// the `CAP_NET_ADMIN` capability, like the root user does. This is
 /// indicated by their documentation starting with "PRIVILEGED:".
 #[allow(missing_copy_implementations)]
-#[derive(Debug)]
 pub struct CanInterface {
     if_index: c_uint,
+    router: NlRouter,
+}
+
+impl Debug for CanInterface {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CanInterface").field("if_index", &self.if_index).finish()
+    }
 }
 
 impl CanInterface {
@@ -404,9 +410,9 @@ impl CanInterface {
     ///
     /// Similar to `open_iface`, but looks up the device by name instead of
     /// the interface index.
-    pub fn open(ifname: &str) -> Result<Self, nix::Error> {
-        let if_index = if_nametoindex(ifname)?;
-        Ok(Self::open_iface(if_index))
+    pub fn open(ifname: &str) -> NlResult<Self> {
+        let if_index = if_nametoindex(ifname).map_err(|err| RouterError::Io(std::io::Error::from(err).kind()))?;
+        Self::open_iface(if_index)
     }
 
     /// Open a CAN interface.
@@ -416,9 +422,15 @@ impl CanInterface {
     /// Note that no actual "opening" or checks are performed when calling
     /// this function, nor does it test to determine if the interface with
     /// the specified index actually exists.
-    pub fn open_iface(if_index: u32) -> Self {
+    pub fn open_iface(if_index: u32) -> NlResult<Self> {
         let if_index = if_index as c_uint;
-        Self { if_index }
+        let router = Self::create_router()?;
+
+        Ok(Self { if_index, router })
+    }
+
+    fn create_router() -> NlResult<NlRouter> {
+        Ok(NlRouter::connect(NlFamily::Route, None, Groups::empty()).map_err(|err| err.to_typed().unwrap_or_else(|err| err))?.0)
     }
 
     /// Creates an `Ifinfomsg` for this CAN interface from a buffer
@@ -432,13 +444,12 @@ impl CanInterface {
 
     /// Sends an info message to the kernel.
     fn send_info_msg(
+        router: &NlRouter,
         msg_type: Rtm,
         info: Ifinfomsg,
         additional_flags: NlmF,
     ) -> Result<(), RouterError<Rtm, Ifinfomsg>> {
-        let nl = Self::open_router().map_err(|err| err.to_typed().unwrap_or_else(|err| err))?;
-
-        for response in nl.send(
+        for response in router.send(
             msg_type,
             NlmF::REQUEST | NlmF::ACK | additional_flags,
             NlPayload::Payload(info),
@@ -451,22 +462,11 @@ impl CanInterface {
         Ok(())
     }
 
-    /// Opens a new netlink socket router, bound to this process' PID.
-    fn open_router() -> Result<NlRouter, RouterError<u16, Buffer>> {
-        // retrieve PID
-        let pid = unistd::Pid::this().as_raw() as u32;
-
-        // groups is empty, because we want no notifications
-        Ok(NlRouter::connect(NlFamily::Route, Some(pid), Groups::empty())?.0)
-    }
-
     /// Sends a query to the kernel and returns the response info message
     /// to the caller.
     fn query_details(
         &self,
     ) -> Result<Option<Nlmsghdr<Rtm, Ifinfomsg>>, RouterError<Rtm, Ifinfomsg>> {
-        let nl = Self::open_router().map_err(|err| err.to_typed().unwrap_or_else(|err| err))?;
-
         let info = self.info_msg({
             let mut buffer = RtBuffer::new();
             buffer.push(
@@ -478,7 +478,7 @@ impl CanInterface {
             buffer
         })?;
 
-        for response in nl.send(Rtm::Getlink, NlmF::REQUEST, NlPayload::Payload(info))? {
+        for response in self.router.send(Rtm::Getlink, NlmF::REQUEST, NlPayload::Payload(info))? {
             return Ok(Some(response?));
         }
 
@@ -496,7 +496,7 @@ impl CanInterface {
             .down()
             .build()?;
 
-        Self::send_info_msg(Rtm::Newlink, info, NlmF::empty())
+        Self::send_info_msg(&self.router, Rtm::Newlink, info, NlmF::empty())
     }
 
     /// Bring up this interface
@@ -510,7 +510,7 @@ impl CanInterface {
             .up()
             .build()?;
 
-        Self::send_info_msg(Rtm::Newlink, info, NlmF::empty())
+        Self::send_info_msg(&self.router, Rtm::Newlink, info, NlmF::empty())
     }
 
     /// Create a virtual CAN (VCAN) interface.
@@ -568,14 +568,16 @@ impl CanInterface {
             })
             .build()?;
 
-        Self::send_info_msg(Rtm::Newlink, info, NlmF::CREATE | NlmF::EXCL)?;
+        let router = Self::create_router()?;
+
+        Self::send_info_msg(&router, Rtm::Newlink, info, NlmF::CREATE | NlmF::EXCL)?;
 
         if let Some(if_index) = index {
-            Ok(Self { if_index })
+            Ok(Self { if_index, router })
         } else {
             // Unfortunately netlink does not return the the if_index assigned to the interface.
             if let Ok(if_index) = if_nametoindex(name) {
-                Ok(Self { if_index })
+                Ok(Self { if_index, router })
             } else {
                 Err(RouterError::new(
                     "Interface must have been deleted between request and this if_nametoindex",
@@ -590,7 +592,7 @@ impl CanInterface {
     ///
     pub fn delete(self) -> Result<(), (Self, RouterError<Rtm, Ifinfomsg>)> {
         match self.info_msg(RtBuffer::new()) {
-            Ok(info) => match Self::send_info_msg(Rtm::Dellink, info, NlmF::empty()) {
+            Ok(info) => match Self::send_info_msg(&self.router, Rtm::Dellink, info, NlmF::empty()) {
                 Ok(()) => Ok(()),
                 Err(err) => Err((self, err)),
             },
@@ -651,7 +653,7 @@ impl CanInterface {
             );
             buffer
         })?;
-        Self::send_info_msg(Rtm::Newlink, info, NlmF::empty())
+        Self::send_info_msg(&self.router, Rtm::Newlink, info, NlmF::empty())
     }
 
     /// Set a CAN-specific parameter.
@@ -693,7 +695,7 @@ impl CanInterface {
             rtattrs.push(link_info);
             rtattrs
         })?;
-        Self::send_info_msg(Rtm::Newlink, info, NlmF::empty())
+        Self::send_info_msg(&self.router, Rtm::Newlink, info, NlmF::empty())
     }
 
     /// Set a CAN-specific set of parameters.
@@ -713,7 +715,7 @@ impl CanInterface {
             //RtBuffer<Ifla, Buffer>::try_from(params)?);
             RtBuffer::try_from(params)?,
         )?;
-        Self::send_info_msg(Rtm::Newlink, info, NlmF::empty())
+        Self::send_info_msg(&self.router, Rtm::Newlink, info, NlmF::empty())
     }
 
     /// Attempt to query an individual CAN parameter on the interface.
@@ -984,6 +986,7 @@ pub mod tests {
     impl Drop for TemporaryInterface {
         fn drop(&mut self) {
             assert!(CanInterface::open_iface(self.interface.if_index)
+                .unwrap()
                 .delete()
                 .is_ok());
         }
